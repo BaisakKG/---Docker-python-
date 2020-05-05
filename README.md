@@ -95,3 +95,184 @@ docker run -p 8000:8000 -v `pwd`:/data --rm -it mydjango ./mynewproject/manage.p
 ***0.0.0.0:8000** -- чтобы веб сервер слушал все интерфейсы\
 **-р 8000:8000** -- подбрасываем порты локальный:контейнер*
 
+## Для управление целой инфраструктурой и несколькими контейнерами
+```
+nano Dockerfile
+FROM python:3
+RUN mkdir /data
+WORKDIR /data
+ADD requirements.txt /data
+RUN pip install -r requirements.txt
+ADD . /data
+
+mv Dockerfile mynewproject
+
+nano mynewproject/requirements.txt
+django
+
+nano docker-compose.yml 
+version: '2'
+services:
+ web:
+  build: ./mynewproject
+  command: python ./manage.py runserver 0.0.0.0:8000
+  ports:
+  - 8000:8000
+  volumes:
+  - ./mynewproject:/data 
+
+docker-compose build
+#если нету: apt install docker-compose
+
+#и запускаем
+docker-compose up
+```
+
+## Добавляем PSQL
+```
+nano docker-compose.yml 
+version: '2'
+services:
+ web:
+  build: ./mynewproject
+  command: python ./manage.py runserver 0.0.0.0:8000
+  ports:
+  - 8000:8000
+  volumes:
+  - ./mynewproject:/data 
+  depends_on:
+  - db    #указываем зависимость от контейнера db
+
+ db:
+  image: postgres:9.4
+
+#запускаем
+docker-compose up
+
+#теперь надо подключить к db через переменное окружение
+nano docker-compose.yml 
+version: '2'
+services:
+ web:
+  build: ./mynewproject
+  command: python ./manage.py runserver 0.0.0.0:8000
+  ports:
+  - 8000:8000
+  volumes:
+  - ./mynewproject:/data 
+  depends_on:
+  - db
+  environment:
+    DATABASE_URL: postgres(указываем это постгрес)://postgres(пользователь)@db(находится)/postgres(базаданных)
+
+ db:
+  image: postgres:9.4
+
+#поменять настройки
+nano mynewproject/mynewproject/settings.py
+
+import dj_database_url
+DATABASES = {
+ 'default': dj_database_url.config()
+}
+
+#теперь пересобираем наш контейнер
+docker-compose build
+
+#запускаем
+docker-compose up
+
+#запускаем migrate
+docker-compose run --rm web python ./manage.py migrate
+
+#создаем юзера
+docker-compose run --rm web python ./manage.py createsuperuser
+```
+## Подключение PSQL
+```
+#для просмотра проброшенных портов
+docker ps
+docker port  <ID>
+
+#заходим в shell
+docker-compose run --rm db psql -h db -U postgres postgres(это БД)
+\dt
+#и видим табл. джанго
+\q
+
+#делаем dump
+docker-compose run --rm db pg_dump -h db -U postgres postgres > database.sql
+
+#смотрим заголовки
+head database.sql
+```
+
+## Deploy on DigitalOcean
+```
+docker-machine #позволяет управлять виртуальными серверами на которых крутится докеры 
+
+docker-machine create --driver digitalocean --digitalocean-access-token $DIGITAL_OCEAN_TOKEN mytestserver(назовем)
+
+docker-machine env mytestserver
+
+eval $(docker-machine env mytestserver)
+
+docker-compose build
+
+docker-compose up
+
+docker-compose run --rm web bash
+
+ls
+
+exit
+
+docker-machine ssh mytestserver
+
+ls /home/user/workshop/docker-workshop/mynewproject
+
+touch ls /home/user/workshop/docker-workshop/mynewproject/somefile
+
+exit
+
+docker-compose run --rm web bash
+
+ls
+
+exit
+
+#создаем compose для девелопера и для продакшна
+cp docker-compose.yml docker-compose.staging.yml
+cp docker-compose.yml docker-compose.develop.yml
+
+vim docker-compose.staging.yml
+version: '2'
+services:
+ web:
+   ports:
+   - 80:8000
+
+vim docker-compose.develop.yml
+version: '2'
+services:
+ web:
+  ports:
+  - 8000:8000
+  volumes:
+  - ./mynewproject:/data
+
+#запускаем по разному от нужды
+docker-compose -f docker-compose.yml -f docker.compose.staging.yml up -d
+# -d -- бекграунд режим
+
+#зальем дамп который делали ранее на продакшн
+#docker-machine ip mytestserver
+
+docker-compose run --rm db psql -h db -U postgres postgres < database.sql
+```
+
+**и все !!!**
+
+Ссылка на оригинал: https://www.youtube.com/watch?v=5LuHkG3fiFY
+
+
